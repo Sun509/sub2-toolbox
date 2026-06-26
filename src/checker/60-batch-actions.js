@@ -61,6 +61,10 @@
     if (title) {
       title.textContent = `账号用量 - ${scopeText}，共 ${total} 个`;
     }
+
+    setTimeout(() => {
+      box.scrollIntoView({ block: 'nearest' });
+    }, 50);
   }
 
   function appendUsageResult(account, result) {

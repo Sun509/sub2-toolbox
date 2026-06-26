@@ -166,10 +166,11 @@
         border-radius:12px;
         box-shadow:0 8px 24px rgba(0,0,0,.35);
         font:12px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,PingFang SC,Microsoft YaHei,sans-serif;
-        overflow:hidden;
+        max-height:calc(100vh - 96px);
+        overflow:auto;
       ">
         <div style="padding:12px 14px;border-bottom:1px solid #30363d;font-weight:700;">
-          Sub2API 账号模型巡检 v0.4.6 并发版
+          Sub2API 账号模型巡检 v0.4.7 并发版
         </div>
 
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
@@ -325,7 +326,7 @@
                 </button>
               </div>
 
-              <div id="sub2api-checker-usage-list" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;"></div>
+              <div id="sub2api-checker-usage-list" style="display:flex;flex-direction:column;gap:6px;max-height:420px;overflow:auto;"></div>
             </div>
           </div>
 

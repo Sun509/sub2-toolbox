@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sub2API 工具箱 - 批量导入与账号巡检
 // @namespace    https://sinry.example
-// @version      0.4.6
+// @version      0.4.7
 // @description  融合批量导入多 JSON 文件、账号模型巡检自动下线、批量设置隐私、批量查询用量功能
 // @match        http://49.51.253.129:8080/admin/accounts*
 // @match        https://sub.pbopenai.cloud/*
@@ -1818,10 +1818,11 @@
         border-radius:12px;
         box-shadow:0 8px 24px rgba(0,0,0,.35);
         font:12px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,PingFang SC,Microsoft YaHei,sans-serif;
-        overflow:hidden;
+        max-height:calc(100vh - 96px);
+        overflow:auto;
       ">
         <div style="padding:12px 14px;border-bottom:1px solid #30363d;font-weight:700;">
-          Sub2API 账号模型巡检 v0.4.6 并发版
+          Sub2API 账号模型巡检 v0.4.7 并发版
         </div>
 
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
@@ -1977,7 +1978,7 @@
                 </button>
               </div>
 
-              <div id="sub2api-checker-usage-list" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;"></div>
+              <div id="sub2api-checker-usage-list" style="display:flex;flex-direction:column;gap:6px;max-height:420px;overflow:auto;"></div>
             </div>
           </div>
 
@@ -3517,6 +3518,10 @@
     if (title) {
       title.textContent = `账号用量 - ${scopeText}，共 ${total} 个`;
     }
+
+    setTimeout(() => {
+      box.scrollIntoView({ block: 'nearest' });
+    }, 50);
   }
 
   function appendUsageResult(account, result) {
