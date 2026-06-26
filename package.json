@@ -1,0 +1,6 @@
+{
+  "scripts": {
+    "build": "node scripts/build-userscript.js",
+    "check": "node scripts/build-userscript.js && node --check dist/sub2-toolbox.user.js"
+  }
+}
