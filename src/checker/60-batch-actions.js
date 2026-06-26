@@ -98,7 +98,7 @@
 
     const detail = document.createElement('div');
     detail.style.cssText = `color:${result?.ok ? '#d9d9d9' : '#ffccc7'};word-break:break-all;`;
-    detail.textContent = result?.ok ? formatAccountUsageData(result.data) : (result?.reason || '未知错误');
+    detail.textContent = result?.ok ? formatAccountUsageData(result.data, account) : (result?.reason || '未知错误');
 
     const meta = document.createElement('div');
     meta.style.cssText = 'color:#8c98a9;';
@@ -706,7 +706,7 @@
         appendUsageResult(account, result);
 
         if (result.ok) {
-          log(`${title} 用量：${formatAccountUsageData(result.data)}`, 'success');
+          log(`${title} 用量：${formatAccountUsageData(result.data, account)}`, 'success');
         } else {
           log(`${title} 查询用量失败：${result.reason}`, 'error');
         }

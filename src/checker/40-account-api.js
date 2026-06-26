@@ -514,13 +514,198 @@
     return output;
   }
 
-  function formatAccountUsageData(rawData) {
+  function normalizeUsageKey(key) {
+    return String(key || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+  }
+
+  function shouldSkipUsageScanKey(key) {
+    const normalized = normalizeUsageKey(key);
+
+    if (['token', 'tokens', 'inputtokens', 'outputtokens', 'totaltokens', 'usedtokens'].includes(normalized)) {
+      return false;
+    }
+
+    return [
+      'credential',
+      'authorization',
+      'password',
+      'secret',
+      'cookie',
+      'proxy',
+      'apikey',
+      'accesskey',
+      'refreshkey',
+    ].some((item) => normalized.includes(item));
+  }
+
+  function getLooseUsageValue(obj, aliases) {
+    if (!isPlainUsageObject(obj)) return undefined;
+
+    const normalizedAliases = aliases.map(normalizeUsageKey);
+
+    for (const [key, value] of Object.entries(obj)) {
+      const normalized = normalizeUsageKey(key);
+      if (normalizedAliases.includes(normalized)) return value;
+    }
+
+    for (const [key, value] of Object.entries(obj)) {
+      const normalized = normalizeUsageKey(key);
+
+      if (normalizedAliases.some((alias) => alias.length > 3 && normalized.includes(alias))) {
+        return value;
+      }
+    }
+
+    return undefined;
+  }
+
+  function formatUsagePercent(value) {
+    const raw = String(value ?? '').trim();
+    const n = Number(raw.replace(/%$/u, ''));
+
+    if (!Number.isFinite(n)) return formatUsagePrimitive(value);
+
+    const percent = n > 0 && n <= 1 ? n * 100 : n;
+    const rounded = Math.round(percent * 10) / 10;
+
+    return `${rounded}%`.replace('.0%', '%');
+  }
+
+  function looksLikeUsageWindowObject(value, path) {
+    if (!isPlainUsageObject(value)) return false;
+
+    const text = `${normalizeUsageKey(path)} ${Object.keys(value).map(normalizeUsageKey).join(' ')}`;
+    const hasWindowHint = /(window|period|duration|reset|ratelimit|usagelimit|quota|throttle)/u.test(text);
+    const hasUsageField = /(percent|percentage|ratio|used|current|limit|quota|max|remaining|reset|request|token|cost)/u.test(text);
+
+    return hasWindowHint && hasUsageField;
+  }
+
+  function formatUsageWindowCandidate(value, fallbackLabel) {
+    if (!isPlainUsageObject(value)) return '';
+
+    const label =
+      getLooseUsageValue(value, ['window', 'window_name', 'windowLabel', 'duration', 'period', 'time_window', 'timeWindow', 'label', 'name', 'key', 'type']) ||
+      fallbackLabel ||
+      '窗口';
+    const percent = getLooseUsageValue(value, ['percent', 'percentage', 'usage_percent', 'usagePercent', 'used_percent', 'usedPercent', 'ratio', 'usage_ratio', 'usageRate']);
+    const used = getLooseUsageValue(value, ['used', 'current', 'count', 'request_count', 'requestCount', 'requests', 'token', 'tokens', 'used_tokens', 'usedTokens']);
+    const limit = getLooseUsageValue(value, ['limit', 'max', 'quota', 'total', 'capacity']);
+    const remaining = getLooseUsageValue(value, ['remaining', 'left', 'available']);
+    const remainingTime = getLooseUsageValue(value, ['remaining_time', 'remainingTime', 'reset_in', 'resetIn', 'reset_after', 'resetAfter', 'ttl', 'next_reset_in', 'nextResetIn', 'time_left', 'timeLeft']);
+    const resetAt = getLooseUsageValue(value, ['reset_at', 'resetAt', 'reset_time', 'resetTime', 'next_reset_at', 'nextResetAt', 'expires_at', 'expiresAt']);
+    const status = getLooseUsageValue(value, ['status', 'state']);
+    const parts = [];
+
+    if (typeof percent !== 'undefined') parts.push(formatUsagePercent(percent));
+
+    if (typeof used !== 'undefined' && typeof limit !== 'undefined') {
+      parts.push(`${formatUsagePrimitive(used)}/${formatUsagePrimitive(limit)}`);
+    } else if (typeof used !== 'undefined') {
+      parts.push(`已用 ${formatUsagePrimitive(used)}`);
+    } else if (typeof limit !== 'undefined') {
+      parts.push(`上限 ${formatUsagePrimitive(limit)}`);
+    }
+
+    if (typeof remaining !== 'undefined' && typeof used === 'undefined') {
+      parts.push(`剩余 ${formatUsagePrimitive(remaining)}`);
+    }
+
+    if (typeof remainingTime !== 'undefined') {
+      parts.push(`剩余时间 ${formatUsagePrimitive(remainingTime)}`);
+    } else if (typeof resetAt !== 'undefined') {
+      parts.push(`重置 ${formatUsagePrimitive(resetAt)}`);
+    }
+
+    if (typeof status !== 'undefined' && status !== '') {
+      parts.push(`状态 ${formatUsagePrimitive(status)}`);
+    }
+
+    if (!parts.length) return '';
+
+    return `${formatUsagePrimitive(label)} ${parts.join(' / ')}`;
+  }
+
+  function collectUsageWindowSummaries(root, sourceLabel) {
+    const output = [];
+    const seenValues = new Set();
+    const seenText = new Set();
+
+    function push(text) {
+      if (!text || seenText.has(text) || output.length >= 10) return;
+
+      seenText.add(text);
+      output.push(text);
+    }
+
+    function walk(value, path, depth) {
+      if (output.length >= 10 || depth > 5 || !value) return;
+
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+          if (isPlainUsageObject(item) && looksLikeUsageWindowObject(item, path)) {
+            push(formatUsageWindowCandidate(item, `${sourceLabel || '窗口'} ${index + 1}`));
+          }
+
+          walk(item, `${path}.${index}`, depth + 1);
+        });
+        return;
+      }
+
+      if (!isPlainUsageObject(value) || seenValues.has(value)) return;
+
+      seenValues.add(value);
+
+      if (looksLikeUsageWindowObject(value, path)) {
+        push(formatUsageWindowCandidate(value, sourceLabel || path.split('.').filter(Boolean).pop() || '窗口'));
+      }
+
+      for (const [key, child] of Object.entries(value)) {
+        if (shouldSkipUsageScanKey(key)) continue;
+
+        walk(child, path ? `${path}.${key}` : key, depth + 1);
+      }
+    }
+
+    walk(root, sourceLabel || '', 0);
+
+    return output;
+  }
+
+  function collectUsageHintFields(root, sourceLabel, output = [], depth = 0, path = '') {
+    if (output.length >= 10 || depth > 4 || !isPlainUsageObject(root)) return output;
+
+    const interestingPattern = /(usage|window|limit|quota|rate|reset|remaining|percent|request|token|cost|billing|charge)/iu;
+
+    for (const [key, value] of Object.entries(root)) {
+      if (output.length >= 10) break;
+      if (shouldSkipUsageScanKey(key)) continue;
+
+      const nextPath = path ? `${path}.${key}` : key;
+
+      if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) {
+        if (interestingPattern.test(nextPath)) {
+          output.push(`${sourceLabel}.${nextPath}: ${formatUsagePrimitive(value)}`);
+        }
+      } else if (isPlainUsageObject(value)) {
+        collectUsageHintFields(value, sourceLabel, output, depth + 1, nextPath);
+      }
+    }
+
+    return output;
+  }
+
+  function formatAccountUsageData(rawData, account) {
     const data = rawData?.data ?? rawData;
 
-    if (!isPlainUsageObject(data)) {
+    if (!isPlainUsageObject(data) && !isPlainUsageObject(account)) {
       return formatUsagePrimitive(data || '无用量数据');
     }
 
+    const windowParts = [
+      ...collectUsageWindowSummaries(account, '账号列表'),
+      ...collectUsageWindowSummaries(data, '接口'),
+    ];
     const metrics = [
       ['请求', ['request_count', 'requestCount', 'requests', 'total_requests', 'totalRequests', 'count']],
       ['输入 tokens', ['prompt_tokens', 'promptTokens', 'input_tokens', 'inputTokens', 'total_prompt_tokens', 'totalPromptTokens']],
@@ -530,18 +715,35 @@
       ['余额', ['balance', 'remaining', 'remaining_quota', 'remainingQuota', 'credit', 'quota']],
     ];
 
-    const parts = [];
+    const metricParts = [];
 
     for (const [label, keys] of metrics) {
-      const value = findUsageValue(data, keys);
+      const value = findUsageValue(data, keys) ?? findUsageValue(account, keys);
       if (typeof value !== 'undefined') {
-        parts.push(`${label} ${formatUsagePrimitive(value)}`);
+        metricParts.push(`${label} ${formatUsagePrimitive(value)}`);
       }
     }
 
-    if (parts.length) return parts.join(' | ');
+    const sections = [];
 
-    const flattened = flattenUsagePrimitives(data);
+    if (windowParts.length) {
+      sections.push(`用量窗口：${windowParts.slice(0, 6).join('；')}`);
+    }
+
+    if (metricParts.length) {
+      sections.push(`今日统计：${metricParts.join(' | ')}`);
+    }
+
+    if (sections.length) return sections.join(' | ');
+
+    const hinted = [
+      ...collectUsageHintFields(data, '接口'),
+      ...collectUsageHintFields(account, '账号列表'),
+    ];
+
+    if (hinted.length) return hinted.slice(0, 10).join(' | ');
+
+    const flattened = flattenUsagePrimitives(data || account);
     if (flattened.length) {
       return flattened
         .map(([key, value]) => `${key}: ${formatUsagePrimitive(value)}`)
@@ -549,7 +751,7 @@
     }
 
     try {
-      return JSON.stringify(data).slice(0, 500);
+      return JSON.stringify(data || account).slice(0, 500);
     } catch (_) {
       return '无法显示用量数据';
     }
