@@ -170,7 +170,7 @@
         overflow:auto;
       ">
         <div style="padding:12px 14px;border-bottom:1px solid #30363d;font-weight:700;">
-          Sub2API 账号模型巡检 v0.5.1 并发版
+          Sub2API 账号模型巡检 v0.5.4 并发版
         </div>
 
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
@@ -220,6 +220,18 @@
               </button>
             </div>
           </label>
+
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button id="sub2api-checker-start-top" type="button"
+              style="flex:1;padding:8px 10px;border:0;border-radius:8px;background:#1677ff;color:#fff;cursor:pointer;">
+              开始巡检
+            </button>
+
+            <button id="sub2api-checker-stop-top" type="button"
+              style="flex:1;padding:8px 10px;border:0;border-radius:8px;background:#fa541c;color:#fff;cursor:pointer;">
+              停止
+            </button>
+          </div>
 
           <div style="display:flex;flex-direction:column;gap:9px;border:1px solid #30363d;border-radius:8px;padding:10px;background:#111723;">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
@@ -371,7 +383,7 @@
             </button>
           </div>
 
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:8px;align-items:center;position:sticky;bottom:0;z-index:2;background:rgba(16, 18, 27, 0.96);padding-top:4px;">
             <button id="sub2api-checker-start"
               style="flex:1;padding:8px 10px;border:0;border-radius:8px;background:#1677ff;color:#fff;cursor:pointer;">
               开始巡检
@@ -385,6 +397,14 @@
 
           <div id="sub2api-checker-stats" style="color:#bfbfbf;">
             总数 0 | 已处理 0 | 正常 0 | 已启用 0 | 已关闭 0 | 跳过 0 | 异常 0
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="font-weight:700;">日志</div>
+            <button id="sub2api-checker-clear-log" type="button"
+              style="height:26px;padding:0 8px;border:0;border-radius:6px;background:#434a57;color:#fff;cursor:pointer;">
+              清空日志
+            </button>
           </div>
 
           <div id="sub2api-checker-log"
@@ -600,16 +620,26 @@
       });
     });
 
-    root.querySelector('#sub2api-checker-start').addEventListener('click', () => {
+    const startCheck = () => {
       run().catch((err) => {
         log(`运行异常：${err.message}`, 'error');
         state.running = false;
       });
-    });
+    };
 
-    root.querySelector('#sub2api-checker-stop').addEventListener('click', () => {
+    const stopCheck = () => {
       state.stopRequested = true;
       log('已请求停止，当前请求结束后退出', 'warn');
+    };
+
+    root.querySelector('#sub2api-checker-start').addEventListener('click', startCheck);
+    root.querySelector('#sub2api-checker-start-top').addEventListener('click', startCheck);
+    root.querySelector('#sub2api-checker-stop').addEventListener('click', stopCheck);
+    root.querySelector('#sub2api-checker-stop-top').addEventListener('click', stopCheck);
+
+    root.querySelector('#sub2api-checker-clear-log').addEventListener('click', () => {
+      const logBox = root.querySelector('#sub2api-checker-log');
+      if (logBox) logBox.innerHTML = '';
     });
 
     updatePanelCollapsed();

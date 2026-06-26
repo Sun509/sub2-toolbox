@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sub2API 工具箱 - 批量导入与账号巡检
 // @namespace    https://sinry.example
-// @version      0.5.1
+// @version      0.5.4
 // @description  融合批量导入多 JSON 文件、账号模型巡检自动下线、批量设置隐私、批量查询用量功能
 // @match        http://49.51.253.129:8080/admin/accounts*
 // @match        https://sub.pbopenai.cloud/*
@@ -1822,7 +1822,7 @@
         overflow:auto;
       ">
         <div style="padding:12px 14px;border-bottom:1px solid #30363d;font-weight:700;">
-          Sub2API 账号模型巡检 v0.5.1 并发版
+          Sub2API 账号模型巡检 v0.5.4 并发版
         </div>
 
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
@@ -1872,6 +1872,18 @@
               </button>
             </div>
           </label>
+
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button id="sub2api-checker-start-top" type="button"
+              style="flex:1;padding:8px 10px;border:0;border-radius:8px;background:#1677ff;color:#fff;cursor:pointer;">
+              开始巡检
+            </button>
+
+            <button id="sub2api-checker-stop-top" type="button"
+              style="flex:1;padding:8px 10px;border:0;border-radius:8px;background:#fa541c;color:#fff;cursor:pointer;">
+              停止
+            </button>
+          </div>
 
           <div style="display:flex;flex-direction:column;gap:9px;border:1px solid #30363d;border-radius:8px;padding:10px;background:#111723;">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
@@ -2023,7 +2035,7 @@
             </button>
           </div>
 
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:8px;align-items:center;position:sticky;bottom:0;z-index:2;background:rgba(16, 18, 27, 0.96);padding-top:4px;">
             <button id="sub2api-checker-start"
               style="flex:1;padding:8px 10px;border:0;border-radius:8px;background:#1677ff;color:#fff;cursor:pointer;">
               开始巡检
@@ -2037,6 +2049,14 @@
 
           <div id="sub2api-checker-stats" style="color:#bfbfbf;">
             总数 0 | 已处理 0 | 正常 0 | 已启用 0 | 已关闭 0 | 跳过 0 | 异常 0
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="font-weight:700;">日志</div>
+            <button id="sub2api-checker-clear-log" type="button"
+              style="height:26px;padding:0 8px;border:0;border-radius:6px;background:#434a57;color:#fff;cursor:pointer;">
+              清空日志
+            </button>
           </div>
 
           <div id="sub2api-checker-log"
@@ -2252,16 +2272,26 @@
       });
     });
 
-    root.querySelector('#sub2api-checker-start').addEventListener('click', () => {
+    const startCheck = () => {
       run().catch((err) => {
         log(`运行异常：${err.message}`, 'error');
         state.running = false;
       });
-    });
+    };
 
-    root.querySelector('#sub2api-checker-stop').addEventListener('click', () => {
+    const stopCheck = () => {
       state.stopRequested = true;
       log('已请求停止，当前请求结束后退出', 'warn');
+    };
+
+    root.querySelector('#sub2api-checker-start').addEventListener('click', startCheck);
+    root.querySelector('#sub2api-checker-start-top').addEventListener('click', startCheck);
+    root.querySelector('#sub2api-checker-stop').addEventListener('click', stopCheck);
+    root.querySelector('#sub2api-checker-stop-top').addEventListener('click', stopCheck);
+
+    root.querySelector('#sub2api-checker-clear-log').addEventListener('click', () => {
+      const logBox = root.querySelector('#sub2api-checker-log');
+      if (logBox) logBox.innerHTML = '';
     });
 
     updatePanelCollapsed();
@@ -3117,6 +3147,58 @@
     return account?.id ?? account?.ID ?? account?.account_id ?? account?.accountId ?? '';
   }
 
+  function getAccountDisplayName(account) {
+    return String(
+      account?.name ||
+      account?.email ||
+      account?.username ||
+      account?.account ||
+      account?.account_name ||
+      account?.accountName ||
+      account?.credentials?.email ||
+      account?.credentials?.username ||
+      account?.credentials?.account ||
+      ''
+    ).trim();
+  }
+
+  function getAccountCreatedTime(account) {
+    const value =
+      account?.created_at ??
+      account?.createdAt ??
+      account?.created_time ??
+      account?.createdTime ??
+      account?.create_time ??
+      account?.createTime ??
+      account?.created ??
+      account?.create_at ??
+      account?.createAt ??
+      '';
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value > 100000000000 ? value : value * 1000;
+    }
+
+    const text = String(value || '').trim();
+    if (!text) return 0;
+
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function sortAccountsByCreatedTime(accounts, direction = 'desc') {
+    const multiplier = direction === 'asc' ? 1 : -1;
+
+    return accounts.slice().sort((a, b) => {
+      const at = getAccountCreatedTime(a);
+      const bt = getAccountCreatedTime(b);
+
+      if (at !== bt) return (at - bt) * multiplier;
+
+      return String(getAccountId(a)).localeCompare(String(getAccountId(b)));
+    });
+  }
+
   async function fetchAccountUsage(accountId) {
     const url = new URL(`/api/v1/admin/accounts/${accountId}/usage`, CONFIG.apiBase);
 
@@ -3417,6 +3499,93 @@
     return parts.join('；');
   }
 
+  function parseUsageWindowsFromText(text) {
+    const clean = String(text || '').replace(/\s+/gu, ' ').trim();
+    const windows = [];
+    const seen = new Set();
+    const pattern = /\b(\d+(?:\.\d+)?\s*[hdm])\s+(\d+(?:\.\d+)?)%\s*((?:现在)|(?:\d+\s*d\s*\d+\s*h)|(?:\d+\s*d)|(?:\d+\s*h)|-)?/giu;
+
+    let match;
+
+    while ((match = pattern.exec(clean)) && windows.length < 6) {
+      const label = match[1].replace(/\s+/gu, '');
+      const percent = Math.max(0, Math.min(100, Number(match[2])));
+      const reset = String(match[3] || '').replace(/\s+/gu, ' ').trim();
+      const key = `${label}:${percent}:${reset}`;
+
+      if (!seen.has(key) && Number.isFinite(percent)) {
+        seen.add(key);
+        windows.push({
+          label,
+          percent,
+          reset: reset || '',
+        });
+      }
+    }
+
+    return windows;
+  }
+
+  function formatUsageRemainingSeconds(seconds) {
+    const n = Math.max(0, Math.floor(Number(seconds) || 0));
+
+    if (!n) return '现在';
+
+    const days = Math.floor(n / 86400);
+    const hours = Math.floor((n % 86400) / 3600);
+    const minutes = Math.floor((n % 3600) / 60);
+
+    if (days && hours) return `${days}d ${hours}h`;
+    if (days) return `${days}d`;
+    if (hours && minutes) return `${hours}h ${minutes}m`;
+    if (hours) return `${hours}h`;
+    if (minutes) return `${minutes}m`;
+
+    return `${n}s`;
+  }
+
+  function normalizeUsageResponse(rawData) {
+    const data = rawData?.data ?? rawData;
+
+    if (!isPlainUsageObject(data)) return [];
+
+    const configs = [
+      ['five_hour', '5h'],
+      ['fiveHour', '5h'],
+      ['five_hours', '5h'],
+      ['fiveHours', '5h'],
+      ['seven_day', '7d'],
+      ['sevenDay', '7d'],
+      ['seven_days', '7d'],
+      ['sevenDays', '7d'],
+    ];
+    const windows = [];
+    const seen = new Set();
+
+    for (const [key, label] of configs) {
+      const item = data[key];
+
+      if (!isPlainUsageObject(item) || seen.has(label)) continue;
+
+      const percent = Math.max(0, Math.min(100, Number(item.utilization ?? item.percent ?? item.percentage ?? item.used_percent ?? 0)));
+      const reset =
+        typeof item.remaining_seconds !== 'undefined'
+          ? formatUsageRemainingSeconds(item.remaining_seconds)
+          : (item.resets_at || item.reset_at || item.resetAt || '');
+
+      if (!Number.isFinite(percent)) continue;
+
+      seen.add(label);
+      windows.push({
+        label,
+        percent,
+        reset: reset || '现在',
+      });
+    }
+
+    return windows;
+  }
+
   function getMaxUsagePercentFromText(text) {
     const matches = String(text || '').match(/(\d+(?:\.\d+)?)%/gu) || [];
     let max = 0;
@@ -3489,13 +3658,28 @@
   }
 
   function formatAccountUsageData(rawData, account) {
+    const apiWindows = normalizeUsageResponse(rawData);
+
+    if (apiWindows.length) {
+      return `用量窗口：${apiWindows.map((item) => `${item.label} ${item.percent}% ${item.reset}`).join('；')}`;
+    }
+
     const visibleWindow = extractVisibleAccountUsageWindowText(account);
 
     return visibleWindow ? `用量窗口：${visibleWindow}` : '未读取到用量窗口';
   }
 
-  function getAccountUsageLevel(account) {
-    const percent = getMaxUsagePercentFromText(extractVisibleAccountUsageWindowText(account));
+  function getAccountUsageWindows(rawData, account) {
+    const apiWindows = normalizeUsageResponse(rawData);
+
+    return apiWindows.length ? apiWindows : parseUsageWindowsFromText(extractVisibleAccountUsageWindowText(account));
+  }
+
+  function getAccountUsageLevel(rawData, account) {
+    const windows = getAccountUsageWindows(rawData, account);
+    const percent = windows.length
+      ? Math.max(...windows.map((item) => Number(item.percent) || 0))
+      : getMaxUsagePercentFromText(extractVisibleAccountUsageWindowText(account));
 
     if (percent >= 90) {
       return {
@@ -3791,6 +3975,95 @@
     });
   }
 
+  async function copyTextToClipboard(text) {
+    const value = String(text || '').trim();
+    if (!value) return false;
+
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (_) {}
+
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (_) {}
+
+    textarea.remove();
+    return ok;
+  }
+
+  function getUsageBarColor(percent) {
+    if (percent >= 90) return '#ff4d4f';
+    if (percent >= 80) return '#fa8c16';
+    return '#20c7a7';
+  }
+
+  function renderUsageBars(rawData, account, ok) {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+    if (!ok) return wrapper;
+
+    const windows = getAccountUsageWindows(rawData, account);
+
+    if (!windows.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:#8c98a9;';
+      empty.textContent = '未读取到用量窗口';
+      wrapper.appendChild(empty);
+      return wrapper;
+    }
+
+    for (const item of windows) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:grid;grid-template-columns:36px minmax(0,1fr);gap:8px;align-items:center;';
+
+      const label = document.createElement('div');
+      label.style.cssText = 'font-weight:700;color:#fff;';
+      label.textContent = item.label;
+
+      const right = document.createElement('div');
+      right.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:0;';
+
+      const meta = document.createElement('div');
+      meta.style.cssText = 'display:flex;align-items:center;gap:10px;color:#d9d9d9;font-size:11px;';
+
+      const percent = document.createElement('span');
+      percent.style.cssText = `font-weight:700;color:${getUsageBarColor(item.percent)};`;
+      percent.textContent = `${item.percent}%`;
+
+      const reset = document.createElement('span');
+      reset.style.cssText = 'color:#8c98a9;';
+      reset.textContent = item.reset || '现在';
+
+      meta.appendChild(percent);
+      meta.appendChild(reset);
+
+      const track = document.createElement('div');
+      track.style.cssText = 'height:7px;background:#26303d;border-radius:999px;overflow:hidden;';
+
+      const fill = document.createElement('div');
+      fill.style.cssText = `width:${item.percent}%;height:100%;background:${getUsageBarColor(item.percent)};border-radius:999px;`;
+
+      track.appendChild(fill);
+      right.appendChild(meta);
+      right.appendChild(track);
+      row.appendChild(label);
+      row.appendChild(right);
+      wrapper.appendChild(row);
+    }
+
+    return wrapper;
+  }
+
   function resetUsageResults(total, scopeText) {
     const box = document.querySelector('#sub2api-checker-usage-results');
     const title = document.querySelector('#sub2api-checker-usage-title');
@@ -3815,8 +4088,9 @@
     if (!list) return;
 
     const accountId = getAccountId(account) || '?';
+    const accountName = getAccountDisplayName(account) || '(未命名)';
     const status = getAccountStatus(account) || '无状态';
-    const usageLevel = getAccountUsageLevel(account);
+    const usageLevel = getAccountUsageLevel(result?.data, account);
     const row = document.createElement('div');
 
     row.style.cssText = `
@@ -3833,23 +4107,45 @@
     header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
 
     const name = document.createElement('span');
-    name.style.cssText = 'font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    name.textContent = `#${accountId} ${account?.name || '(未命名)'}`;
+    name.style.cssText = 'font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;';
+    name.textContent = `#${accountId} ${accountName}`;
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;align-items:center;gap:6px;flex:0 0 auto;';
+
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.textContent = '复制';
+    copyButton.title = '复制账号';
+    copyButton.style.cssText = 'height:24px;padding:0 7px;border:0;border-radius:6px;background:#434a57;color:#fff;cursor:pointer;font:inherit;';
+    copyButton.addEventListener('click', async () => {
+      const ok = await copyTextToClipboard(accountName);
+      copyButton.textContent = ok ? '已复制' : '失败';
+      setTimeout(() => {
+        copyButton.textContent = '复制';
+      }, 1200);
+    });
 
     const badge = document.createElement('span');
-    badge.style.cssText = `flex:0 0 auto;color:${result?.ok ? '#95de64' : '#ff7875'};`;
+    badge.style.cssText = `color:${result?.ok ? '#95de64' : '#ff7875'};`;
     badge.textContent = result?.ok ? '成功' : '失败';
 
-    const detail = document.createElement('div');
-    detail.style.cssText = `color:${result?.ok ? usageLevel.color : '#ffccc7'};word-break:break-all;font-weight:${usageLevel.level === 'normal' ? '400' : '700'};`;
-    detail.textContent = result?.ok ? formatAccountUsageData(result.data, account) : (result?.reason || '未知错误');
+    actions.appendChild(copyButton);
+    actions.appendChild(badge);
+
+    const detail = result?.ok ? renderUsageBars(result.data, account, true) : document.createElement('div');
+
+    if (!result?.ok) {
+      detail.style.cssText = 'color:#ffccc7;word-break:break-all;';
+      detail.textContent = result?.reason || '未知错误';
+    }
 
     const meta = document.createElement('div');
     meta.style.cssText = 'color:#8c98a9;';
     meta.textContent = `状态：${status}`;
 
     header.appendChild(name);
-    header.appendChild(badge);
+    header.appendChild(actions);
     row.appendChild(header);
     row.appendChild(detail);
     row.appendChild(meta);
@@ -4412,7 +4708,7 @@
     try {
       log(`开始拉取账号，准备批量查询用量，范围：${targetGroupText}`);
 
-      const accounts = await fetchAccounts();
+      const accounts = sortAccountsByCreatedTime(await fetchAccounts(), 'desc');
 
       log(`本次需要查询用量的账号数：${accounts.length}`);
       resetUsageResults(accounts.length, targetGroupText);

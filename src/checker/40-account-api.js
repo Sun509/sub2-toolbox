@@ -432,6 +432,58 @@
     return account?.id ?? account?.ID ?? account?.account_id ?? account?.accountId ?? '';
   }
 
+  function getAccountDisplayName(account) {
+    return String(
+      account?.name ||
+      account?.email ||
+      account?.username ||
+      account?.account ||
+      account?.account_name ||
+      account?.accountName ||
+      account?.credentials?.email ||
+      account?.credentials?.username ||
+      account?.credentials?.account ||
+      ''
+    ).trim();
+  }
+
+  function getAccountCreatedTime(account) {
+    const value =
+      account?.created_at ??
+      account?.createdAt ??
+      account?.created_time ??
+      account?.createdTime ??
+      account?.create_time ??
+      account?.createTime ??
+      account?.created ??
+      account?.create_at ??
+      account?.createAt ??
+      '';
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value > 100000000000 ? value : value * 1000;
+    }
+
+    const text = String(value || '').trim();
+    if (!text) return 0;
+
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function sortAccountsByCreatedTime(accounts, direction = 'desc') {
+    const multiplier = direction === 'asc' ? 1 : -1;
+
+    return accounts.slice().sort((a, b) => {
+      const at = getAccountCreatedTime(a);
+      const bt = getAccountCreatedTime(b);
+
+      if (at !== bt) return (at - bt) * multiplier;
+
+      return String(getAccountId(a)).localeCompare(String(getAccountId(b)));
+    });
+  }
+
   async function fetchAccountUsage(accountId) {
     const url = new URL(`/api/v1/admin/accounts/${accountId}/usage`, CONFIG.apiBase);
 
@@ -732,6 +784,93 @@
     return parts.join('；');
   }
 
+  function parseUsageWindowsFromText(text) {
+    const clean = String(text || '').replace(/\s+/gu, ' ').trim();
+    const windows = [];
+    const seen = new Set();
+    const pattern = /\b(\d+(?:\.\d+)?\s*[hdm])\s+(\d+(?:\.\d+)?)%\s*((?:现在)|(?:\d+\s*d\s*\d+\s*h)|(?:\d+\s*d)|(?:\d+\s*h)|-)?/giu;
+
+    let match;
+
+    while ((match = pattern.exec(clean)) && windows.length < 6) {
+      const label = match[1].replace(/\s+/gu, '');
+      const percent = Math.max(0, Math.min(100, Number(match[2])));
+      const reset = String(match[3] || '').replace(/\s+/gu, ' ').trim();
+      const key = `${label}:${percent}:${reset}`;
+
+      if (!seen.has(key) && Number.isFinite(percent)) {
+        seen.add(key);
+        windows.push({
+          label,
+          percent,
+          reset: reset || '',
+        });
+      }
+    }
+
+    return windows;
+  }
+
+  function formatUsageRemainingSeconds(seconds) {
+    const n = Math.max(0, Math.floor(Number(seconds) || 0));
+
+    if (!n) return '现在';
+
+    const days = Math.floor(n / 86400);
+    const hours = Math.floor((n % 86400) / 3600);
+    const minutes = Math.floor((n % 3600) / 60);
+
+    if (days && hours) return `${days}d ${hours}h`;
+    if (days) return `${days}d`;
+    if (hours && minutes) return `${hours}h ${minutes}m`;
+    if (hours) return `${hours}h`;
+    if (minutes) return `${minutes}m`;
+
+    return `${n}s`;
+  }
+
+  function normalizeUsageResponse(rawData) {
+    const data = rawData?.data ?? rawData;
+
+    if (!isPlainUsageObject(data)) return [];
+
+    const configs = [
+      ['five_hour', '5h'],
+      ['fiveHour', '5h'],
+      ['five_hours', '5h'],
+      ['fiveHours', '5h'],
+      ['seven_day', '7d'],
+      ['sevenDay', '7d'],
+      ['seven_days', '7d'],
+      ['sevenDays', '7d'],
+    ];
+    const windows = [];
+    const seen = new Set();
+
+    for (const [key, label] of configs) {
+      const item = data[key];
+
+      if (!isPlainUsageObject(item) || seen.has(label)) continue;
+
+      const percent = Math.max(0, Math.min(100, Number(item.utilization ?? item.percent ?? item.percentage ?? item.used_percent ?? 0)));
+      const reset =
+        typeof item.remaining_seconds !== 'undefined'
+          ? formatUsageRemainingSeconds(item.remaining_seconds)
+          : (item.resets_at || item.reset_at || item.resetAt || '');
+
+      if (!Number.isFinite(percent)) continue;
+
+      seen.add(label);
+      windows.push({
+        label,
+        percent,
+        reset: reset || '现在',
+      });
+    }
+
+    return windows;
+  }
+
   function getMaxUsagePercentFromText(text) {
     const matches = String(text || '').match(/(\d+(?:\.\d+)?)%/gu) || [];
     let max = 0;
@@ -804,13 +943,28 @@
   }
 
   function formatAccountUsageData(rawData, account) {
+    const apiWindows = normalizeUsageResponse(rawData);
+
+    if (apiWindows.length) {
+      return `用量窗口：${apiWindows.map((item) => `${item.label} ${item.percent}% ${item.reset}`).join('；')}`;
+    }
+
     const visibleWindow = extractVisibleAccountUsageWindowText(account);
 
     return visibleWindow ? `用量窗口：${visibleWindow}` : '未读取到用量窗口';
   }
 
-  function getAccountUsageLevel(account) {
-    const percent = getMaxUsagePercentFromText(extractVisibleAccountUsageWindowText(account));
+  function getAccountUsageWindows(rawData, account) {
+    const apiWindows = normalizeUsageResponse(rawData);
+
+    return apiWindows.length ? apiWindows : parseUsageWindowsFromText(extractVisibleAccountUsageWindowText(account));
+  }
+
+  function getAccountUsageLevel(rawData, account) {
+    const windows = getAccountUsageWindows(rawData, account);
+    const percent = windows.length
+      ? Math.max(...windows.map((item) => Number(item.percent) || 0))
+      : getMaxUsagePercentFromText(extractVisibleAccountUsageWindowText(account));
 
     if (percent >= 90) {
       return {
