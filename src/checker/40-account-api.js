@@ -732,6 +732,18 @@
     return parts.join('；');
   }
 
+  function getMaxUsagePercentFromText(text) {
+    const matches = String(text || '').match(/(\d+(?:\.\d+)?)%/gu) || [];
+    let max = 0;
+
+    for (const item of matches) {
+      const n = Number(item.replace('%', ''));
+      if (Number.isFinite(n)) max = Math.max(max, n);
+    }
+
+    return max;
+  }
+
   function extractVisibleAccountUsageWindowText(account) {
     const identities = collectAccountIdentityTexts(account);
 
@@ -792,65 +804,41 @@
   }
 
   function formatAccountUsageData(rawData, account) {
-    const data = rawData?.data ?? rawData;
+    const visibleWindow = extractVisibleAccountUsageWindowText(account);
 
-    if (!isPlainUsageObject(data) && !isPlainUsageObject(account)) {
-      return formatUsagePrimitive(data || '无用量数据');
+    return visibleWindow ? `用量窗口：${visibleWindow}` : '未读取到用量窗口';
+  }
+
+  function getAccountUsageLevel(account) {
+    const percent = getMaxUsagePercentFromText(extractVisibleAccountUsageWindowText(account));
+
+    if (percent >= 90) {
+      return {
+        percent,
+        level: 'critical',
+        color: '#ff7875',
+        border: '#ff4d4f',
+        background: 'rgba(255, 77, 79, 0.12)',
+      };
     }
 
-    const windowParts = [
-      extractVisibleAccountUsageWindowText(account),
-      ...collectUsageWindowSummaries(data, '接口'),
-    ].filter(Boolean);
-    const metrics = [
-      ['请求', ['request_count', 'requestCount', 'requests', 'total_requests', 'totalRequests', 'count']],
-      ['输入 tokens', ['prompt_tokens', 'promptTokens', 'input_tokens', 'inputTokens', 'total_prompt_tokens', 'totalPromptTokens']],
-      ['输出 tokens', ['completion_tokens', 'completionTokens', 'output_tokens', 'outputTokens', 'total_completion_tokens', 'totalCompletionTokens']],
-      ['总 tokens', ['total_tokens', 'totalTokens', 'tokens', 'used_tokens', 'usedTokens']],
-      ['费用', ['cost', 'total_cost', 'totalCost', 'amount', 'usage_cost', 'usageCost']],
-      ['余额', ['balance', 'remaining', 'remaining_quota', 'remainingQuota', 'credit', 'quota']],
-    ];
-
-    const metricParts = [];
-
-    for (const [label, keys] of metrics) {
-      const value = findUsageValue(data, keys) ?? findUsageValue(account, keys);
-      if (typeof value !== 'undefined') {
-        metricParts.push(`${label} ${formatUsagePrimitive(value)}`);
-      }
+    if (percent >= 80) {
+      return {
+        percent,
+        level: 'warning',
+        color: '#ffd666',
+        border: '#fa8c16',
+        background: 'rgba(250, 140, 22, 0.12)',
+      };
     }
 
-    const sections = [];
-
-    if (windowParts.length) {
-      sections.push(`用量窗口：${windowParts.slice(0, 6).join('；')}`);
-    }
-
-    if (metricParts.length) {
-      sections.push(`今日统计：${metricParts.join(' | ')}`);
-    }
-
-    if (sections.length) return sections.join(' | ');
-
-    const hinted = [
-      ...collectUsageHintFields(data, '接口'),
-      ...collectUsageHintFields(account, '账号列表'),
-    ];
-
-    if (hinted.length) return hinted.slice(0, 10).join(' | ');
-
-    const flattened = flattenUsagePrimitives(data || account);
-    if (flattened.length) {
-      return flattened
-        .map(([key, value]) => `${key}: ${formatUsagePrimitive(value)}`)
-        .join(' | ');
-    }
-
-    try {
-      return JSON.stringify(data || account).slice(0, 500);
-    } catch (_) {
-      return '无法显示用量数据';
-    }
+    return {
+      percent,
+      level: 'normal',
+      color: '#d9d9d9',
+      border: '#30363d',
+      background: '#0b0f17',
+    };
   }
 
   async function deleteAccount(accountId) {

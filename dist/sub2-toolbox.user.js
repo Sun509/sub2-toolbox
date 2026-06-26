@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sub2API 工具箱 - 批量导入与账号巡检
 // @namespace    https://sinry.example
-// @version      0.4.9
+// @version      0.5.1
 // @description  融合批量导入多 JSON 文件、账号模型巡检自动下线、批量设置隐私、批量查询用量功能
 // @match        http://49.51.253.129:8080/admin/accounts*
 // @match        https://sub.pbopenai.cloud/*
@@ -1822,7 +1822,7 @@
         overflow:auto;
       ">
         <div style="padding:12px 14px;border-bottom:1px solid #30363d;font-weight:700;">
-          Sub2API 账号模型巡检 v0.4.9 并发版
+          Sub2API 账号模型巡检 v0.5.1 并发版
         </div>
 
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
@@ -3417,6 +3417,18 @@
     return parts.join('；');
   }
 
+  function getMaxUsagePercentFromText(text) {
+    const matches = String(text || '').match(/(\d+(?:\.\d+)?)%/gu) || [];
+    let max = 0;
+
+    for (const item of matches) {
+      const n = Number(item.replace('%', ''));
+      if (Number.isFinite(n)) max = Math.max(max, n);
+    }
+
+    return max;
+  }
+
   function extractVisibleAccountUsageWindowText(account) {
     const identities = collectAccountIdentityTexts(account);
 
@@ -3477,65 +3489,41 @@
   }
 
   function formatAccountUsageData(rawData, account) {
-    const data = rawData?.data ?? rawData;
+    const visibleWindow = extractVisibleAccountUsageWindowText(account);
 
-    if (!isPlainUsageObject(data) && !isPlainUsageObject(account)) {
-      return formatUsagePrimitive(data || '无用量数据');
+    return visibleWindow ? `用量窗口：${visibleWindow}` : '未读取到用量窗口';
+  }
+
+  function getAccountUsageLevel(account) {
+    const percent = getMaxUsagePercentFromText(extractVisibleAccountUsageWindowText(account));
+
+    if (percent >= 90) {
+      return {
+        percent,
+        level: 'critical',
+        color: '#ff7875',
+        border: '#ff4d4f',
+        background: 'rgba(255, 77, 79, 0.12)',
+      };
     }
 
-    const windowParts = [
-      extractVisibleAccountUsageWindowText(account),
-      ...collectUsageWindowSummaries(data, '接口'),
-    ].filter(Boolean);
-    const metrics = [
-      ['请求', ['request_count', 'requestCount', 'requests', 'total_requests', 'totalRequests', 'count']],
-      ['输入 tokens', ['prompt_tokens', 'promptTokens', 'input_tokens', 'inputTokens', 'total_prompt_tokens', 'totalPromptTokens']],
-      ['输出 tokens', ['completion_tokens', 'completionTokens', 'output_tokens', 'outputTokens', 'total_completion_tokens', 'totalCompletionTokens']],
-      ['总 tokens', ['total_tokens', 'totalTokens', 'tokens', 'used_tokens', 'usedTokens']],
-      ['费用', ['cost', 'total_cost', 'totalCost', 'amount', 'usage_cost', 'usageCost']],
-      ['余额', ['balance', 'remaining', 'remaining_quota', 'remainingQuota', 'credit', 'quota']],
-    ];
-
-    const metricParts = [];
-
-    for (const [label, keys] of metrics) {
-      const value = findUsageValue(data, keys) ?? findUsageValue(account, keys);
-      if (typeof value !== 'undefined') {
-        metricParts.push(`${label} ${formatUsagePrimitive(value)}`);
-      }
+    if (percent >= 80) {
+      return {
+        percent,
+        level: 'warning',
+        color: '#ffd666',
+        border: '#fa8c16',
+        background: 'rgba(250, 140, 22, 0.12)',
+      };
     }
 
-    const sections = [];
-
-    if (windowParts.length) {
-      sections.push(`用量窗口：${windowParts.slice(0, 6).join('；')}`);
-    }
-
-    if (metricParts.length) {
-      sections.push(`今日统计：${metricParts.join(' | ')}`);
-    }
-
-    if (sections.length) return sections.join(' | ');
-
-    const hinted = [
-      ...collectUsageHintFields(data, '接口'),
-      ...collectUsageHintFields(account, '账号列表'),
-    ];
-
-    if (hinted.length) return hinted.slice(0, 10).join(' | ');
-
-    const flattened = flattenUsagePrimitives(data || account);
-    if (flattened.length) {
-      return flattened
-        .map(([key, value]) => `${key}: ${formatUsagePrimitive(value)}`)
-        .join(' | ');
-    }
-
-    try {
-      return JSON.stringify(data || account).slice(0, 500);
-    } catch (_) {
-      return '无法显示用量数据';
-    }
+    return {
+      percent,
+      level: 'normal',
+      color: '#d9d9d9',
+      border: '#30363d',
+      background: '#0b0f17',
+    };
   }
 
   async function deleteAccount(accountId) {
@@ -3828,6 +3816,7 @@
 
     const accountId = getAccountId(account) || '?';
     const status = getAccountStatus(account) || '无状态';
+    const usageLevel = getAccountUsageLevel(account);
     const row = document.createElement('div');
 
     row.style.cssText = `
@@ -3835,9 +3824,9 @@
       flex-direction:column;
       gap:4px;
       padding:7px 8px;
-      border:1px solid #30363d;
+      border:1px solid ${usageLevel.border};
       border-radius:8px;
-      background:#0b0f17;
+      background:${usageLevel.background};
     `;
 
     const header = document.createElement('div');
@@ -3852,7 +3841,7 @@
     badge.textContent = result?.ok ? '成功' : '失败';
 
     const detail = document.createElement('div');
-    detail.style.cssText = `color:${result?.ok ? '#d9d9d9' : '#ffccc7'};word-break:break-all;`;
+    detail.style.cssText = `color:${result?.ok ? usageLevel.color : '#ffccc7'};word-break:break-all;font-weight:${usageLevel.level === 'normal' ? '400' : '700'};`;
     detail.textContent = result?.ok ? formatAccountUsageData(result.data, account) : (result?.reason || '未知错误');
 
     const meta = document.createElement('div');

@@ -73,6 +73,7 @@
 
     const accountId = getAccountId(account) || '?';
     const status = getAccountStatus(account) || '无状态';
+    const usageLevel = getAccountUsageLevel(account);
     const row = document.createElement('div');
 
     row.style.cssText = `
@@ -80,9 +81,9 @@
       flex-direction:column;
       gap:4px;
       padding:7px 8px;
-      border:1px solid #30363d;
+      border:1px solid ${usageLevel.border};
       border-radius:8px;
-      background:#0b0f17;
+      background:${usageLevel.background};
     `;
 
     const header = document.createElement('div');
@@ -97,7 +98,7 @@
     badge.textContent = result?.ok ? '成功' : '失败';
 
     const detail = document.createElement('div');
-    detail.style.cssText = `color:${result?.ok ? '#d9d9d9' : '#ffccc7'};word-break:break-all;`;
+    detail.style.cssText = `color:${result?.ok ? usageLevel.color : '#ffccc7'};word-break:break-all;font-weight:${usageLevel.level === 'normal' ? '400' : '700'};`;
     detail.textContent = result?.ok ? formatAccountUsageData(result.data, account) : (result?.reason || '未知错误');
 
     const meta = document.createElement('div');
