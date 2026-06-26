@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sub2API 工具箱 - 批量导入与账号巡检
 // @namespace    https://sinry.example
-// @version      0.4.8
+// @version      0.4.9
 // @description  融合批量导入多 JSON 文件、账号模型巡检自动下线、批量设置隐私、批量查询用量功能
 // @match        http://49.51.253.129:8080/admin/accounts*
 // @match        https://sub.pbopenai.cloud/*
@@ -1822,7 +1822,7 @@
         overflow:auto;
       ">
         <div style="padding:12px 14px;border-bottom:1px solid #30363d;font-weight:700;">
-          Sub2API 账号模型巡检 v0.4.8 并发版
+          Sub2API 账号模型巡检 v0.4.9 并发版
         </div>
 
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
@@ -3256,23 +3256,40 @@
     return `${rounded}%`.replace('.0%', '%');
   }
 
+  function hasUsageDisplayValue(value) {
+    if (value === null || typeof value === 'undefined') return false;
+    if (typeof value === 'string' && !value.trim()) return false;
+    return true;
+  }
+
+  function normalizeUsageLabel(value, fallbackLabel) {
+    if (typeof value === 'string' || typeof value === 'number') {
+      const text = String(value).trim();
+      if (text && text !== '[object Object]') return text;
+    }
+
+    return fallbackLabel || '窗口';
+  }
+
   function looksLikeUsageWindowObject(value, path) {
     if (!isPlainUsageObject(value)) return false;
 
-    const text = `${normalizeUsageKey(path)} ${Object.keys(value).map(normalizeUsageKey).join(' ')}`;
-    const hasWindowHint = /(window|period|duration|reset|ratelimit|usagelimit|quota|throttle)/u.test(text);
-    const hasUsageField = /(percent|percentage|ratio|used|current|limit|quota|max|remaining|reset|request|token|cost)/u.test(text);
+    const keysText = Object.keys(value).map(normalizeUsageKey).join(' ');
+    const pathText = normalizeUsageKey(path);
+    const hasWindowHint = /(window|period|duration|reset|ratelimit|usagelimit|quota|throttle)/u.test(keysText);
+    const hasUsageField = /(percent|percentage|ratio|used|current|limit|quota|max|remaining|reset|request|token|cost)/u.test(keysText);
 
-    return hasWindowHint && hasUsageField;
+    return hasWindowHint && hasUsageField && !/(name|email|account)$/u.test(pathText);
   }
 
   function formatUsageWindowCandidate(value, fallbackLabel) {
     if (!isPlainUsageObject(value)) return '';
 
-    const label =
+    const label = normalizeUsageLabel(
       getLooseUsageValue(value, ['window', 'window_name', 'windowLabel', 'duration', 'period', 'time_window', 'timeWindow', 'label', 'name', 'key', 'type']) ||
-      fallbackLabel ||
-      '窗口';
+      fallbackLabel,
+      fallbackLabel || '窗口'
+    );
     const percent = getLooseUsageValue(value, ['percent', 'percentage', 'usage_percent', 'usagePercent', 'used_percent', 'usedPercent', 'ratio', 'usage_ratio', 'usageRate']);
     const used = getLooseUsageValue(value, ['used', 'current', 'count', 'request_count', 'requestCount', 'requests', 'token', 'tokens', 'used_tokens', 'usedTokens']);
     const limit = getLooseUsageValue(value, ['limit', 'max', 'quota', 'total', 'capacity']);
@@ -3282,27 +3299,27 @@
     const status = getLooseUsageValue(value, ['status', 'state']);
     const parts = [];
 
-    if (typeof percent !== 'undefined') parts.push(formatUsagePercent(percent));
+    if (hasUsageDisplayValue(percent)) parts.push(formatUsagePercent(percent));
 
-    if (typeof used !== 'undefined' && typeof limit !== 'undefined') {
+    if (hasUsageDisplayValue(used) && hasUsageDisplayValue(limit)) {
       parts.push(`${formatUsagePrimitive(used)}/${formatUsagePrimitive(limit)}`);
-    } else if (typeof used !== 'undefined') {
+    } else if (hasUsageDisplayValue(used)) {
       parts.push(`已用 ${formatUsagePrimitive(used)}`);
-    } else if (typeof limit !== 'undefined') {
+    } else if (hasUsageDisplayValue(limit)) {
       parts.push(`上限 ${formatUsagePrimitive(limit)}`);
     }
 
-    if (typeof remaining !== 'undefined' && typeof used === 'undefined') {
+    if (hasUsageDisplayValue(remaining) && !hasUsageDisplayValue(used)) {
       parts.push(`剩余 ${formatUsagePrimitive(remaining)}`);
     }
 
-    if (typeof remainingTime !== 'undefined') {
+    if (hasUsageDisplayValue(remainingTime)) {
       parts.push(`剩余时间 ${formatUsagePrimitive(remainingTime)}`);
-    } else if (typeof resetAt !== 'undefined') {
+    } else if (hasUsageDisplayValue(resetAt)) {
       parts.push(`重置 ${formatUsagePrimitive(resetAt)}`);
     }
 
-    if (typeof status !== 'undefined' && status !== '') {
+    if (hasUsageDisplayValue(status)) {
       parts.push(`状态 ${formatUsagePrimitive(status)}`);
     }
 
@@ -3357,6 +3374,85 @@
     return output;
   }
 
+  function collectAccountIdentityTexts(account) {
+    const values = [
+      account?.name,
+      account?.email,
+      account?.username,
+      account?.account,
+      account?.account_name,
+      account?.accountName,
+      account?.credentials?.email,
+      account?.credentials?.username,
+      account?.credentials?.account,
+    ];
+
+    return Array.from(new Set(
+      values
+        .map((item) => String(item || '').trim())
+        .filter((item) => item.length >= 4)
+    ));
+  }
+
+  function extractUsageWindowFromText(text) {
+    const clean = String(text || '').replace(/\s+/gu, ' ').trim();
+    const parts = [];
+    const seen = new Set();
+    const pattern = /\b(\d+(?:\.\d+)?\s*[hdm])\s+(\d+(?:\.\d+)?%)\s*((?:现在)|(?:\d+\s*d\s*\d+\s*h)|(?:\d+\s*d)|(?:\d+\s*h)|-)?/giu;
+
+    let match;
+
+    while ((match = pattern.exec(clean)) && parts.length < 4) {
+      const label = match[1].replace(/\s+/gu, '');
+      const percent = match[2];
+      const reset = String(match[3] || '').replace(/\s+/gu, ' ').trim();
+      const item = `${label} ${percent}${reset ? ` ${reset}` : ''}`;
+
+      if (!seen.has(item)) {
+        seen.add(item);
+        parts.push(item);
+      }
+    }
+
+    return parts.join('；');
+  }
+
+  function extractVisibleAccountUsageWindowText(account) {
+    const identities = collectAccountIdentityTexts(account);
+
+    if (!identities.length) return '';
+
+    const selectors = [
+      'tr',
+      '[role="row"]',
+      '.ant-table-row',
+      '.el-table__row',
+      '.v-data-table__tr',
+      '.arco-table-tr',
+    ].join(',');
+    const rows = Array.from(document.querySelectorAll(selectors));
+
+    for (const row of rows) {
+      if (
+        row.closest('#sub2api-checker-shell') ||
+        row.closest('#sub2api-importer-shell') ||
+        row.closest('#sub2api-toolbox-shell')
+      ) {
+        continue;
+      }
+
+      const rowText = row.textContent || '';
+
+      if (!identities.some((item) => rowText.includes(item))) continue;
+
+      const usageText = extractUsageWindowFromText(row.innerText || rowText);
+
+      if (usageText) return usageText;
+    }
+
+    return '';
+  }
+
   function collectUsageHintFields(root, sourceLabel, output = [], depth = 0, path = '') {
     if (output.length >= 10 || depth > 4 || !isPlainUsageObject(root)) return output;
 
@@ -3388,9 +3484,9 @@
     }
 
     const windowParts = [
-      ...collectUsageWindowSummaries(account, '账号列表'),
+      extractVisibleAccountUsageWindowText(account),
       ...collectUsageWindowSummaries(data, '接口'),
-    ];
+    ].filter(Boolean);
     const metrics = [
       ['请求', ['request_count', 'requestCount', 'requests', 'total_requests', 'totalRequests', 'count']],
       ['输入 tokens', ['prompt_tokens', 'promptTokens', 'input_tokens', 'inputTokens', 'total_prompt_tokens', 'totalPromptTokens']],
